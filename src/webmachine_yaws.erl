@@ -15,6 +15,8 @@
 
 %% @doc Yaws interface for webmachine.
 -module(webmachine_yaws).
+
+-ifdef(WEBMACHINE_YAWS).
 -author('Steve Vinoski <vinoski@ieee.org>').
 
 -ifdef(WEBMACHINE_YAWS).
@@ -166,4 +168,4 @@ make_reqdata(Path) ->
     {RD, _} = Req:get_reqdata(),
     RD.
 
--endif.  %% WEBMACHINE_YAWS
+-endif. %% WEBMACHINE_YAWS
