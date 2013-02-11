@@ -1,6 +1,6 @@
 ERL          ?= erl
 APP          := webmachine
-WEBMACHINE_SERVER := mochiweb
+WEBMACHINE_SERVER ?= mochiweb
 
 REPO = ${shell echo `basename "$${PWD}"`}
 ARTIFACTSFILE = ${shell echo ${REPO}-`date +%F_%H-%M-%S`.tgz}
@@ -23,7 +23,6 @@ distclean: clean
 
 edoc:
 	@$(ERL) -noshell -run edoc_run application '$(APP)' '"."' '[{preprocess, true},{includes, ["."]}]'
-
 test: all
 	@WEBMACHINE_SERVER=$(WEBMACHINE_SERVER) ./rebar skip_deps=true eunit
 
@@ -59,3 +58,15 @@ verbosetest: all
 travisupload:
 	tar cvfz ${ARTIFACTSFILE} --exclude '*.beam' --exclude '*.erl' test.log .eunit
 	travis-artifacts upload --path ${ARTIFACTSFILE}
+
+# Meta-tasks for testing specific backends, does a clean between runs.
+# If you want to test with a specific backend repeatedly without the clean,
+# use `make test` with WEBMACHINE_SERVER set appropriately.
+yaws-test: clean
+	@WEBMACHINE_SERVER=yaws ${MAKE} test
+
+cowboy-test: clean
+	@WEBMACHINE_SERVER=cowboy ${MAKE} test
+
+mochiweb-test: clean
+	@WEBMACHINE_SERVER=mochiweb ${MAKE} test
