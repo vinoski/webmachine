@@ -28,11 +28,13 @@ case os:getenv("WEBMACHINE_SERVER") of
         NDeps = lists:keystore(yaws, 1, Deps, YawsDep),
         NConfig = lists:keystore(deps, 1, NewConf, {deps, NDeps}),
         {value, {erl_opts, ErlOpts}} = lists:keysearch(erl_opts, 1, NConfig),
-        lists:keystore(erl_opts, 1, NConfig, {erl_opts, [{d, 'WEBMACHINE_YAWS'}]});
+        Define = [{d, 'WEBMACHINE_YAWS'}],
+        lists:keystore(erl_opts, 1, NConfig, {erl_opts, ErlOpts ++ Define});
     "cowboy" ->
         {value, {deps, Deps}} = lists:keysearch(deps, 1, NewConf),
         NDeps = lists:keystore(cowboy, 1, Deps, CowboyDep),
         NConfig = lists:keystore(deps, 1, NewConf, {deps, NDeps}),
         {value, {erl_opts, ErlOpts}} = lists:keysearch(erl_opts, 1, NConfig),
-        lists:keystore(erl_opts, 1, NConfig, {erl_opts, [{d, 'WEBMACHINE_COWBOY'}]})
+        Define = [{d, 'WEBMACHINE_COWBOY'}],
+        lists:keystore(erl_opts, 1, NConfig, {erl_opts, ErlOpts ++ Define})
 end.

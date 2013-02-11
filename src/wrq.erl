@@ -61,14 +61,14 @@ create(Method,Scheme,Version,RawPath,Headers,WSMod) ->
       resp_body = <<>>, response_code=500,
       resp_range = follow_request,
       notes=[], wsmod=WSMod}).
-create(RD = #wm_reqdata{raw_path=RawPath, wsmod=WSMod}) ->
+create(RD = #wm_reqdata{raw_path=RawPath}) ->
     {Path, _, _} = mochiweb_util:urlsplit_path(RawPath),
     Cookie = case get_req_header("cookie", RD) of
                  undefined -> [];
-                 Value -> WSMod:parse_cookie(Value)
+                 Value -> mochiweb_cookies:parse_cookie(Value)
              end,
     {_, QueryString, _} = mochiweb_util:urlsplit_path(RawPath),
-    ReqQS = WSMod:parse_qs(QueryString),
+    ReqQS = mochiweb_util:parse_qs(QueryString),
     RD#wm_reqdata{path=Path,req_cookie=Cookie,req_qs=ReqQS}.
 load_dispatch_data(PathInfo, HostTokens, Port, PathTokens, AppRoot,
                    DispPath, RD) ->
