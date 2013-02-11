@@ -1,5 +1,6 @@
 ERL          ?= erl
 APP          := webmachine
+WEBMACHINE_SERVER := mochiweb
 
 REPO = ${shell echo `basename "$${PWD}"`}
 ARTIFACTSFILE = ${shell echo ${REPO}-`date +%F_%H-%M-%S`.tgz}
@@ -9,22 +10,22 @@ ARTIFACTSFILE = ${shell echo ${REPO}-`date +%F_%H-%M-%S`.tgz}
 all: deps compile
 
 compile: deps
-	./rebar compile
+	WEBMACHINE_SERVER=$(WEBMACHINE_SERVER) ./rebar compile
 
 deps:
-	@(./rebar get-deps)
+	@WEBMACHINE_SERVER=$(WEBMACHINE_SERVER) ./rebar get-deps
 
 clean:
-	@(./rebar clean)
+	@WEBMACHINE_SERVER=$(WEBMACHINE_SERVER) ./rebar clean
 
 distclean: clean
-	@(./rebar delete-deps)
+	@WEBMACHINE_SERVER=$(WEBMACHINE_SERVER) ./rebar delete-deps
 
 edoc:
 	@$(ERL) -noshell -run edoc_run application '$(APP)' '"."' '[{preprocess, true},{includes, ["."]}]'
 
 test: all
-	@(./rebar skip_deps=true eunit)
+	@WEBMACHINE_SERVER=$(WEBMACHINE_SERVER) ./rebar skip_deps=true eunit
 
 APPS = kernel stdlib sasl erts ssl tools os_mon runtime_tools crypto inets \
 	xmerl webtool snmp public_key mnesia eunit syntax_tools compiler
@@ -53,7 +54,7 @@ cleanplt:
 	rm $(COMBO_PLT)
 
 verbosetest: all
-	@(./rebar -v skip_deps=true eunit)
+	@WEBMACHINE_SERVER=$(WEBMACHINE_SERVER) ./rebar -v skip_deps=true eunit
 
 travisupload:
 	tar cvfz ${ARTIFACTSFILE} --exclude '*.beam' --exclude '*.erl' test.log .eunit
