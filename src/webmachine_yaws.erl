@@ -15,8 +15,6 @@
 
 %% @doc Yaws interface for webmachine.
 -module(webmachine_yaws).
-
--ifdef(WEBMACHINE_YAWS).
 -author('Steve Vinoski <vinoski@ieee.org>').
 
 -ifdef(WEBMACHINE_YAWS).
@@ -47,6 +45,9 @@ start(Options0) ->
     {SConf, GConf} = convert_options(Options, SConf0, []),
     Docroot = "/tmp",
     ok = yaws:start_embedded(Docroot, SConf, GConf, "webmachine-yaws"),
+    LoadedInfo = proplists:get_value(loaded, application_controller:info()),
+    {yaws, _, Version} = lists:keyfind(yaws, 1, LoadedInfo),
+    application:set_env(webmachine, server_version, "Yaws/" ++ Version),
     {ok, whereis(yaws_server)}.
 
 stop() ->

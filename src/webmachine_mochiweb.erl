@@ -40,7 +40,11 @@ start(Options0) ->
     {PName, DGroup, Options} = webmachine_ws:start(Options0, ?MODULE),
     Name = list_to_atom(to_list(PName) ++ "_mochiweb"),
     LoopFun = fun(X) -> loop(DGroup, X) end,
-    mochiweb_http:start([{name, Name}, {loop, LoopFun} | Options]).
+    {ok,_} = Res = mochiweb_http:start([{name, Name}, {loop, LoopFun} | Options]),
+    LoadedInfo = proplists:get_value(loaded, application_controller:info()),
+    {mochiweb, _, Version} = lists:keyfind(mochiweb, 1, LoadedInfo),
+    application:set_env(webmachine, server_version, "MochiWeb/" ++ Version),
+    Res.
 
 stop() ->
     {registered_name, PName} = process_info(self(), registered_name),
