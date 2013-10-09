@@ -130,16 +130,25 @@ do_rewrite(RewriteMod, Method, Scheme, Version, Headers, RawPath) ->
 
 start_stop_test() ->
     application:start(inets),
-    WS = case os:getenv("WEBMACHINE_SERVER") of
+    application:start(mochiweb),
+    WSstr = os:getenv("WEBMACHINE_SERVER"),
+    WS = case WSstr of
              false ->
-                 mochiweb;
-             WS_str ->
-                 list_to_atom(WS_str)
-         end,
-    application:start(WS),
+                 false;
+             _ ->
+                 Nm = list_to_atom(WSstr),
+                 application:start(Nm),
+                 Nm
+    end,
     ?assertEqual(ok, webmachine:start()),
     ?assertEqual(ok, webmachine:stop()),
-    application:stop(WS),
+    case WS of
+        false ->
+            ok;
+        _ ->
+            application:stop(WS)
+    end,
+    application:stop(mochiweb),
     application:stop(inets),
     ok.
 

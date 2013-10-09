@@ -37,11 +37,11 @@
 
 
 start(Options0) ->
-    {_PName, Options} = webmachine_ws:start(Options0, ?MODULE),
-    SConf0 = [{dispatchmod, ?MODULE}],
+    {_PName, DGroup, Options} = webmachine_ws:start(Options0, ?MODULE),
+    SConf0 = [{dispatchmod, ?MODULE}, {opaque, [{wmname, DGroup}]}],
     {SConf, GConf} = convert_options(Options, SConf0, []),
-    Docroot = "/tmp",
-    ok = yaws:start_embedded(Docroot, SConf, GConf, "webmachine-yaws"),
+    Docroot = "priv/www",
+    ok = yaws:start_embedded(Docroot, SConf, GConf, DGroup),
     LoadedInfo = proplists:get_value(loaded, application_controller:info()),
     {yaws, _, Version} = lists:keyfind(yaws, 1, LoadedInfo),
     application:set_env(webmachine, server_version, "Yaws/" ++ Version),
@@ -52,7 +52,8 @@ stop() ->
 
 dispatch(Arg) ->
     Req = webmachine:new_request(yaws, {?MODULE, Arg}),
-    webmachine_ws:dispatch_request(Req),
+    {wmname, Name} = lists:keyfind(wmname, 1, Arg#arg.opaque),
+    webmachine_ws:dispatch_request(Name, Req),
     done.
 
 get_req_info(Want, Arg) ->

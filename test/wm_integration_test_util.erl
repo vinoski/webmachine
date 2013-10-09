@@ -19,6 +19,7 @@
 %% stack, as a complement to the unit-testing and mocking strategies.
 -module(wm_integration_test_util).
 
+-ifdef(WEBMACHINE_MOCHIWEB).
 -ifdef(TEST).
 -export([start/3, stop/1]).
 -export([get_port/1, url/1, url/2]).
@@ -144,4 +145,5 @@ service_unavailable_test(Ctx) ->
     ?assertMatch({{"HTTP/1.1", 503, "Service Unavailable"}, _, _}, Result),
     ok.
 
+-endif.
 -endif.

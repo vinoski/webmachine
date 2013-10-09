@@ -34,7 +34,7 @@
 -include_lib("cowboy/include/http.hrl").
 
 start(Options0) ->
-    {_PName, Options} = webmachine_ws:start(Options0, ?MODULE),
+    {_PName, _DGroup, Options} = webmachine_ws:start(Options0, ?MODULE),
     ok = application:start(cowboy),
     LoadedInfo = proplists:get_value(loaded, application_controller:info()),
     {cowboy, _, Version} = lists:keyfind(cowboy, 1, LoadedInfo),

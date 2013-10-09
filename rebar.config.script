@@ -4,36 +4,27 @@
 YawsDep = {yaws, "1.*", {git, "git://github.com/klacke/yaws", {branch, "master"}}}.
 CowboyDep = {cowboy, "0.6.1", {git, "git://github.com/extend/cowboy", {tag, "0.6.1"}}}.
 
-NewConf = case erlang:system_info(otp_release) =< "R15B01" of
-              true  ->
-                  HashDefine = [{d,old_hash}],
-                  case lists:keysearch(erl_opts, 1, CONFIG) of
-                      {value, {erl_opts, Opts}} ->
-                          lists:keyreplace(erl_opts,1,CONFIG,
-                                           {erl_opts,Opts++HashDefine});
-                      false ->
-                          CONFIG ++ [{erl_opts, HashDefine}]
-                  end;
-              false -> CONFIG
-          end,
-
 case os:getenv("WEBMACHINE_SERVER") of
     false ->
         %% default to mochiweb
-        NewConf;
+        {value, {erl_opts, ErlOpts}} = lists:keysearch(erl_opts, 1, CONFIG),
+        Define = [{d, 'WEBMACHINE_MOCHIWEB'}],
+        lists:keystore(erl_opts, 1, CONFIG, {erl_opts, ErlOpts ++ Define});
     "mochiweb" ->
-        NewConf;
+        {value, {erl_opts, ErlOpts}} = lists:keysearch(erl_opts, 1, CONFIG),
+        Define = [{d, 'WEBMACHINE_MOCHIWEB'}],
+        lists:keystore(erl_opts, 1, CONFIG, {erl_opts, ErlOpts ++ Define});
     "yaws" ->
-        {value, {deps, Deps}} = lists:keysearch(deps, 1, NewConf),
+        {value, {deps, Deps}} = lists:keysearch(deps, 1, CONFIG),
         NDeps = lists:keystore(yaws, 1, Deps, YawsDep),
-        NConfig = lists:keystore(deps, 1, NewConf, {deps, NDeps}),
+        NConfig = lists:keystore(deps, 1, CONFIG, {deps, NDeps}),
         {value, {erl_opts, ErlOpts}} = lists:keysearch(erl_opts, 1, NConfig),
         Define = [{d, 'WEBMACHINE_YAWS'}],
         lists:keystore(erl_opts, 1, NConfig, {erl_opts, ErlOpts ++ Define});
     "cowboy" ->
-        {value, {deps, Deps}} = lists:keysearch(deps, 1, NewConf),
+        {value, {deps, Deps}} = lists:keysearch(deps, 1, CONFIG),
         NDeps = lists:keystore(cowboy, 1, Deps, CowboyDep),
-        NConfig = lists:keystore(deps, 1, NewConf, {deps, NDeps}),
+        NConfig = lists:keystore(deps, 1, CONFIG, {deps, NDeps}),
         {value, {erl_opts, ErlOpts}} = lists:keysearch(erl_opts, 1, NConfig),
         Define = [{d, 'WEBMACHINE_COWBOY'}],
         lists:keystore(erl_opts, 1, NConfig, {erl_opts, ErlOpts ++ Define})

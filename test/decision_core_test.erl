@@ -15,6 +15,7 @@
 
 -module(decision_core_test).
 
+-ifdef(WEBMACHINE_MOCHIWEB).
 -ifdef(TEST).
 
 -include("wm_reqdata.hrl").
@@ -1552,4 +1553,5 @@ identity(X) ->
 to_html(ReqData, Context) ->
     {?HTML_CONTENT, ReqData, Context}.
 
+-endif.
 -endif.
