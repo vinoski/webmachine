@@ -40,20 +40,8 @@ new_request(mochiweb, Request) ->
     Method = Request:get(method),
     Scheme = Request:get(scheme),
     Version = Request:get(version),
-    {Headers, RawPath} = case application:get_env(webmachine, rewrite_module) of
-        {ok, RewriteMod} ->
-            do_rewrite(RewriteMod,
-                       Method,
-                       Scheme,
-                       Version,
-                       Request:get(headers),
-                       Request:get(raw_path));
-        undefined ->
-            {Request:get(headers), Request:get(raw_path)}
-    end,
     Socket = Request:get(socket),
     RawPath = Request:get(raw_path),
-    Version = Request:get(version),
     Headers = Request:get(headers),
     new_request_common(Socket, Method, Scheme, RawPath, Version, Headers, webmachine_mochiweb);
 
