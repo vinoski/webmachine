@@ -476,7 +476,7 @@ recv_stream_body(PassedState=#wm_reqstate{reqdata=RD}, MaxHunkSize) ->
         {"100-continue", _} ->
             send(PassedState#wm_reqstate.socket,
                  [make_version(wrq:version(RD)),
-                  make_code(100), <<"\r\n\r\n">>], {?MODULE, PassedState});
+                  make_code(100), <<"\r\n\r\n">>], PassedState);
         _Else ->
             ok
     end,
