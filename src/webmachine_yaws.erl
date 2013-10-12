@@ -76,8 +76,9 @@ get_req_info([path|T], #arg{req=Req}=Arg, Acc) ->
 get_req_info([version|T], #arg{req=Req}=Arg, Acc) ->
     Version = Req#http_request.version,
     get_req_info(T, Arg, [{version, Version}|Acc]);
-get_req_info([headers|T], #arg{headers = Headers}=Arg, Acc) ->
-    get_req_info(T, Arg, [{headers, yaws_api:reformat_header(Headers)}|Acc]);
+get_req_info([headers|T], #arg{headers=Headers0}=Arg, Acc) ->
+    Headers = yaws_api:reformat_header(Headers0, fun header_formatter/2),
+    get_req_info(T, Arg, [{headers, Headers}|Acc]);
 get_req_info([], _Arg, Acc) ->
     lists:reverse(Acc).
 
@@ -121,6 +122,8 @@ header_formatter(H, {multi, Vals}) ->
 header_formatter(H, V) ->
     {H, V}.
 
+headers_to_list(Headers) when is_list(Headers) ->
+    Headers;
 headers_to_list(Headers) ->
     Formatted = yaws_api:reformat_header(Headers, fun header_formatter/2),
     lists:foldr(fun({_,_}=HV, Acc) ->
