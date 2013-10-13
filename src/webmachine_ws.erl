@@ -17,7 +17,7 @@
 -module(webmachine_ws).
 -author('Steve Vinoski <vinoski@ieee.org>').
 
--export([start/2, dispatch_request/2, get_webserver_mod/0]).
+-export([start/1, start/2, dispatch_request/2, get_webserver_mod/0]).
 
 %% The `log_dir' option is deprecated, but remove it from the
 %% options list if it is present
@@ -27,6 +27,10 @@
                      resource_module_option]).
 
 -define (WM_OPTION_DEFAULTS, [{error_handler, webmachine_error_handler}]).
+
+start(Options) ->
+    WSMod = get_webserver_mod(),
+    WSMod:start(Options).
 
 start(Options, _WSMod) ->
     {DispatchList, PName, DGroup, WMOptions, OtherOptions} = get_wm_options(Options),
@@ -70,14 +74,25 @@ dispatch_request(Name, Req) ->
     end.
 
 get_webserver_mod() ->
-    case os:getenv("WEBMACHINE_SERVER") of
-        false ->
+    case application:get_env(webmachine, webserver) of
+        undefined ->
+            WS = case os:getenv("WEBMACHINE_SERVER") of
+                     false ->
+                         mochiweb;
+                     "mochiweb" ->
+                         mochiweb;
+                     "yaws" ->
+                         yaws;
+                     "cowboy" ->
+                         cowboy
+                 end,
+            ok = application:set_env(webmachine, webserver, WS),
+            get_webserver_mod();
+        {ok, mochiweb} ->
             webmachine_mochiweb;
-        "mochiweb" ->
-            webmachine_mochiweb;
-        "yaws" ->
+        {ok, yaws} ->
             webmachine_yaws;
-        "cowboy" ->
+        {ok, cowboy} ->
             webmachine_cowboy
     end.
 
