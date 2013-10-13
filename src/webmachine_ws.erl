@@ -17,7 +17,8 @@
 -module(webmachine_ws).
 -author('Steve Vinoski <vinoski@ieee.org>').
 
--export([start/1, start/2, dispatch_request/2, get_webserver_mod/0]).
+-export([start/1, start/2, dispatch_request/2, get_webserver_mod/0,
+         make_headers/1, headers_to_list/1]).
 
 %% The `log_dir' option is deprecated, but remove it from the
 %% options list if it is present
@@ -33,7 +34,8 @@ start(Options) ->
     WSMod:start(Options).
 
 start(Options, _WSMod) ->
-    {DispatchList, PName, DGroup, WMOptions, OtherOptions} = get_wm_options(Options),
+    {DispatchList, PName, DGroup, WMOptions, OtherOptions} =
+        get_wm_options(Options),
     webmachine_router:init_routes(DGroup, DispatchList),
     [application_set_unless_env_or_undef(K, V) || {K, V} <- WMOptions],
     {PName, DGroup, OtherOptions}.
@@ -95,6 +97,14 @@ get_webserver_mod() ->
         {ok, cowboy} ->
             webmachine_cowboy
     end.
+
+make_headers(Hdrs) ->
+    WSMod = get_webserver_mod(),
+    WSMod:make_headers(Hdrs).
+
+headers_to_list(Hdrs) ->
+    WSMod = get_webserver_mod(),
+    WSMod:headers_to_list(Hdrs).
 
 handle_error(Code, Error, Req) ->
     {ok, ErrorHandler} = application:get_env(webmachine, error_handler),
