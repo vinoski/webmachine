@@ -33,14 +33,14 @@
 
 -record(integration_state, {
           webmachine_sup,
-          mochi_serv,
+          web_serv,
           port,
           resource_name,
           base_url = "http://localhost"
          }).
 
 %% Returns an integration_state record that should be passed to get_port/1 and
-%% stop/1. Starts up webmachine and the mochiweb server with the given name,
+%% stop/1. Starts up webmachine and the web server with the given name,
 %% ip, and dispatch list. Communication is set up on an ephemeral port, which
 %% can be accessed via get_port/1.
 start(Name, IP, DispatchList) ->
@@ -50,21 +50,22 @@ start(Name, IP, DispatchList) ->
     {ok, WebmachineSup} = webmachine_sup:start_link(),
     WebConfig = [{name, Name}, {ip, IP}, {port, ?EPHEMERAL_PORT},
                  {dispatch, DispatchList}],
-    {ok, MochiServ} = webmachine_mochiweb:start(WebConfig),
-    link(MochiServ),
-    Port = mochiweb_socket_server:get(MochiServ, port),
+    {ok, WebServ} = webmachine_ws:start(WebConfig),
+    link(WebServ),
+    %%Port = mochiweb_socket_server:get(MochiServ, port),
+    Port = webmachine_ws:get_listen_port(WebServ),
     #integration_state{webmachine_sup=WebmachineSup,
-                       mochi_serv=MochiServ,
+                       web_serv=WebServ,
                        port=Port,
                        resource_name=Name}.
 
 %% Receives the integration_state record returned by start/3
 stop(Context) ->
     stop_supervisor(Context#integration_state.webmachine_sup),
-    MochiServ = Context#integration_state.mochi_serv,
-    {registered_name, MochiName} = process_info(MochiServ, registered_name),
-    webmachine_mochiweb:stop(MochiName),
-    stop_supervisor(MochiServ),
+    WebServ = Context#integration_state.mochi_serv,
+    {registered_name, Name} = process_info(WebServ, registered_name),
+    webmachine_ws:stop(Name),
+    stop_supervisor(WebServ),
     application:stop(inets).
 
 %% Receives the integration_state record returned by start_webmachine, returns

@@ -132,7 +132,7 @@ setup() ->
     WebConfig = [{ip, "0.0.0.0"}, {port, 12000},
                  {dispatch, [{["etagtest", '*'], ?MODULE, []}]}],
     {ok, Pid0} = webmachine_sup:start_link(),
-    {ok, Pid1} = webmachine_mochiweb:start(WebConfig),
+    {ok, Pid1} = webmachine_ws:start(WebConfig),
     link(Pid1),
     {Pid0, Pid1}.
 

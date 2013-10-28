@@ -17,7 +17,7 @@
 -module(webmachine_ws).
 -author('Steve Vinoski <vinoski@ieee.org>').
 
--export([start/1, start/2, dispatch_request/2, get_webserver_mod/0,
+-export([start/1, start/2, stop/1, dispatch_request/2, get_webserver_mod/0,
          make_headers/1, headers_to_list/1]).
 
 %% The `log_dir' option is deprecated, but remove it from the
@@ -39,6 +39,10 @@ start(Options, _WSMod) ->
     webmachine_router:init_routes(DGroup, DispatchList),
     [application_set_unless_env_or_undef(K, V) || {K, V} <- WMOptions],
     {PName, DGroup, OtherOptions}.
+
+stop(PName) ->
+    WSMod = get_webserver_mod(),
+    WSMod:stop(PName).
 
 dispatch_request(Name, Req) ->
     DispatchList = webmachine_router:get_routes(Name),

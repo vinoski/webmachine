@@ -18,7 +18,7 @@
 -author('Steve Vinoski <vinoski@ieee.org>').
 
 -ifdef(WEBMACHINE_YAWS).
--export([start/1, stop/0, dispatch/1, get_req_info/2]).
+-export([start/1, stop/1, dispatch/1, get_req_info/2]).
 -export([get_header_value/2,
          new_headers/0,
          make_headers/1,
@@ -40,14 +40,21 @@ start(Options0) ->
     {_PName, DGroup, Options} = webmachine_ws:start(Options0, ?MODULE),
     SConf0 = [{dispatchmod, ?MODULE}, {opaque, [{wmname, DGroup}]}],
     {SConf, GConf} = convert_options(Options, SConf0, []),
-    Docroot = "priv/www",
+    DefaultDocroot = "priv/www",
+    Docroot = case filelib:is_dir(DefaultDocroot) of
+                  true -> DefaultDocroot;
+                  false -> "."
+              end,
     ok = yaws:start_embedded(Docroot, SConf, GConf, DGroup),
     LoadedInfo = proplists:get_value(loaded, application_controller:info()),
     {yaws, _, Version} = lists:keyfind(yaws, 1, LoadedInfo),
     application:set_env(webmachine, server_version, "Yaws/" ++ Version),
+    {ok, YawsConf} = application:get_env(yaws, embedded_conf),
+    application:set_env(webmachine, yaws_conf, YawsConf),
     {ok, whereis(yaws_server)}.
 
-stop() ->
+stop(_Name) ->
+    %% TODO: stop only the named server
     yaws:stop().
 
 dispatch(Arg) ->

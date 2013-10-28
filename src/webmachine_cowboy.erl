@@ -16,7 +16,7 @@
 -module(webmachine_cowboy).
 
 -ifdef(WEBMACHINE_COWBOY).
--export([start/1, stop/0]).
+-export([start/1, stop/1]).
 -export([init/3, handle/2, terminate/2]).
 -export([get_header_value/2,
          new_headers/0,
@@ -34,8 +34,9 @@
 -include_lib("cowboy/include/http.hrl").
 
 start(Options0) ->
-    {_PName, _DGroup, Options} = webmachine_ws:start(Options0, ?MODULE),
+    {PName, _DGroup, Options} = webmachine_ws:start(Options0, ?MODULE),
     ok = application:start(cowboy),
+    Name = list_to_atom(atom_to_list(PName) ++ "_cowboy"),
     LoadedInfo = proplists:get_value(loaded, application_controller:info()),
     {cowboy, _, Version} = lists:keyfind(cowboy, 1, LoadedInfo),
     application:set_env(webmachine, server_version, "Cowboy/" ++ Version),
@@ -48,8 +49,8 @@ start(Options0) ->
         cowboy_tcp_transport, Conf,
         cowboy_http_protocol, [{dispatch, Dispatch}]).
 
-stop() ->
-    cowboy:stop_listener('webmachine-cowboy').
+stop(Name) ->
+    cowboy:stop_listener(Name).
 
 init({tcp, http}, Req, _Opts) ->
     {ok, Req, {}}.

@@ -19,7 +19,7 @@
 -author('Justin Sheehy <justin@basho.com>').
 -author('Andy Gross <andy@basho.com>').
 -author('Steve Vinoski <vinoski@ieee.org>').
--export([start/1, stop/0, stop/1, loop/2]).
+-export([start/1, stop/1, loop/2]).
 -export([get_header_value/2,
          new_headers/0,
          make_headers/1,
@@ -44,11 +44,6 @@ start(Options0) ->
     {mochiweb, _, Version} = lists:keyfind(mochiweb, 1, LoadedInfo),
     application:set_env(webmachine, server_version, "MochiWeb/" ++ Version),
     Res.
-
-stop() ->
-    {registered_name, PName} = process_info(self(), registered_name),
-    MochiName = list_to_atom(atom_to_list(PName) ++ "_mochiweb"),
-    stop(MochiName).
 
 stop(Name) ->
     mochiweb_http:stop(Name).
