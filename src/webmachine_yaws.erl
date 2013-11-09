@@ -1,5 +1,5 @@
 %% @author Steve Vinoski <vinoski@ieee.org>
-%% @copyright 2012 Basho Technologies
+%% @copyright 2012-2013 Basho Technologies
 %%
 %%    Licensed under the Apache License, Version 2.0 (the "License");
 %%    you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@
 -author('Steve Vinoski <vinoski@ieee.org>').
 
 -ifdef(WEBMACHINE_YAWS).
+-behaviour(webmachine_server).
 -export([start/1, stop/1, dispatch/1, get_req_info/2]).
 -export([get_header_value/2,
          new_headers/0,
@@ -26,15 +27,19 @@
          merge_header/3,
          headers_to_list/1,
          headers_from_list/1,
-         socket_send/2,
-         socket_recv/3,
-         socket_setopts/2,
-         make_reqdata/1
+         get_listen_port/1,
+         send_reply/5,
+         recv_body/2,
+         recv_stream_body/3,
+         make_reqdata/1,
+         send/2,
+         recv/3,
+         setopts/2
         ]).
 
 -include_lib("yaws/include/yaws_api.hrl").
 -include_lib("yaws/include/yaws.hrl").
-
+-include("wm_reqdata.hrl").
 
 start(Options0) ->
     {_PName, DGroup, Options} = webmachine_ws:start(Options0, ?MODULE),
@@ -49,8 +54,6 @@ start(Options0) ->
     LoadedInfo = proplists:get_value(loaded, application_controller:info()),
     {yaws, _, Version} = lists:keyfind(yaws, 1, LoadedInfo),
     application:set_env(webmachine, server_version, "Yaws/" ++ Version),
-    {ok, YawsConf} = application:get_env(yaws, embedded_conf),
-    application:set_env(webmachine, yaws_conf, YawsConf),
     {ok, whereis(yaws_server)}.
 
 stop(_Name) ->
@@ -58,10 +61,29 @@ stop(_Name) ->
     yaws:stop().
 
 dispatch(Arg) ->
-    Req = webmachine:new_request(yaws, {?MODULE, Arg}),
+    erase(yaws_read_body),
+    erase(yaws_close_socket),
+    Req = webmachine:new_request(yaws, Arg),
     {wmname, Name} = lists:keyfind(wmname, 1, Arg#arg.opaque),
     webmachine_ws:dispatch_request(Name, Req),
-    done.
+    case get(yaws_close_socket) of
+        true ->
+            do_close(Arg#arg.clisock),
+            closed;
+        false ->
+            case get(yaws_read_body) of
+                true ->
+                    done;
+                undefined ->
+                    case req_has_body(Arg) of
+                        true ->
+                            do_close(Arg#arg.clisock),
+                            closed;
+                        false ->
+                            done
+                    end
+            end
+    end.
 
 get_req_info(Want, Arg) ->
     get_req_info(Want, Arg, []).
@@ -151,16 +173,53 @@ headers_from_list(Headers) ->
                         yaws_api:set_header(Hdrs, Hdr, Val)
                 end, #headers{}, Headers).
 
-socket_send(Socket, Data) ->
-    yaws:gen_tcp_send(Socket, Data).
+get_listen_port(_Server) ->
+    {ok, _GC, [[SC]]} = yaws_api:getconf(),
+    yaws_api:get_listen_port(SC).
 
-socket_recv(Socket, Length, Timeout) ->
-    SC = get(sc),
-    yaws:do_recv(Socket, Length, yaws:is_ssl(SC), Timeout).
+send_reply(Socket, Status, Headers, Body0, #wm_reqdata{wsdata=Arg}=RD) ->
+    YawsReq = Arg#arg.req,
+    Vsn = YawsReq#http_request.version,
+    ok = yaws:gen_tcp_send(Socket,
+                           [webmachine_server:make_version(Vsn),
+                            Status, <<"\r\n">>,
+                            [[H, <<": ">>, V, <<"\r\n">>] || {H,V} <- Headers],
+                            <<"\r\n">>]),
+    case YawsReq#http_request.method of
+        'HEAD' ->
+            ok;
+        _ ->
+            WSMod = wrq:wsmod(RD),
+            case Body0 of
+                {stream, Body} ->
+                    Len = webmachine_server:send_stream_body(Socket, Body, WSMod),
+                    put(bytes_written, Len);
+                {known_length_stream, _Length, Body} ->
+                    ok = webmachine_server:send_stream_body_no_chunk(Socket, Body,
+                                                                     WSMod);
+                {writer, Body} ->
+                    ok = webmachine_server:send_writer_body(Socket, Body, WSMod);
+                <<>> ->
+                    ok;
+                _ ->
+                    ok = send(Socket, Body0)
+            end
+    end,
+    check_for_close(Arg, Headers),
+    {ok, RD}.
 
-socket_setopts(Socket, Options) ->
-    SC = get(sc),
-    yaws:setopts(Socket, Options, yaws:is_ssl(SC)).
+recv_body(Socket, RD) ->
+    put(yaws_read_body, true),
+    MRH = RD#wm_reqdata.max_recv_hunk,
+    MRB = RD#wm_reqdata.max_recv_body,
+    Data = webmachine_server:read_whole_stream(
+             webmachine_server:recv_str_body(Socket, MRH, RD),
+             [], MRB, 0),
+    {{ok, Data}, RD}.
+
+recv_stream_body(Socket, MaxHunk, RD) ->
+    put(yaws_read_body, true),
+    {webmachine_server:recv_str_body(Socket, MaxHunk, RD), RD}.
 
 make_reqdata(Path) ->
     %% Helper function to construct a request and return the ReqData
@@ -170,8 +229,77 @@ make_reqdata(Path) ->
                req=#http_request{method='GET', path={abs_path,Path}, version={1,1}},
                docroot="/tmp"},
     put(sc, #sconf{}),
-    Req = webmachine:new_request(yaws, {?MODULE, Arg}),
+    Req = webmachine:new_request(yaws, Arg),
     {RD, _} = Req:get_reqdata(),
     RD.
+
+send(Socket, Data) ->
+    yaws:gen_tcp_send(Socket, Data).
+
+recv(Socket, Length, Timeout) ->
+    SockType = case yaws_api:get_sslsocket(Socket) of
+                   undefined -> nossl;
+                   {ok, _} -> ssl
+               end,
+    yaws:do_recv(Socket, Length, SockType, Timeout).
+
+setopts(Socket, Opts) ->
+    SockType = case yaws_api:get_sslsocket(Socket) of
+                   undefined -> nossl;
+                   {ok, _} -> ssl
+               end,
+    yaws:setopts(Socket, Opts, SockType).
+
+check_for_close(Arg, RespHeaders) ->
+    Vsn = (Arg#arg.req)#http_request.version,
+    case header_to_lower(connection, Arg#arg.headers) of
+        "close" ->
+            put(yaws_close_socket, true);
+        "keep-alive" ->
+            put(yaws_close_socket, Vsn < {1,0});
+        _ ->
+            case Vsn of
+                {1,1} ->
+                    case header_to_lower(connection, RespHeaders) of
+                        "close" ->
+                            put(yaws_close_socket, true);
+                        _ ->
+                            put(yaws_close_socket, false)
+                    end;
+                _ ->
+                    put(yaws_close_socket, true)
+            end
+    end.
+
+header_to_lower(Hdr, Hdrs) ->
+    string:to_lower(
+      case get_header_value(Hdr, Hdrs) of
+          Val when is_list(Val) ->
+              Val;
+          Val when is_binary(Val) ->
+              binary_to_list(Val)
+      end).
+
+do_close(Socket) ->
+    case yaws_api:get_sslsocket(Socket) of
+        undefined -> gen_tcp:close(Socket);
+        {ok, SslSocket} -> ssl:close(SslSocket)
+    end.
+
+req_has_body(#arg{headers=Hdrs}) ->
+    Size = get_header_value(content_length, Hdrs),
+    case Size of
+        undefined ->
+            case header_to_lower(transfer_encoding, Hdrs) of
+                "chunked" ->
+                    true;
+                _ ->
+                    false
+            end;
+        "0" ->
+            false;
+        _ ->
+            true
+    end.
 
 -endif. %% WEBMACHINE_YAWS

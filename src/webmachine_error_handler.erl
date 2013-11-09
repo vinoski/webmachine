@@ -1,7 +1,7 @@
 %% @author Justin Sheehy <justin@basho.com>
 %% @author Andy Gross <andy@basho.com>
 %% @author Jeremy Latt <jeremy@basho.com>
-%% @copyright 2007-2008 Basho Technologies
+%% @copyright 2007-2013 Basho Technologies
 %%
 %%    Licensed under the Apache License, Version 2.0 (the "License");
 %%    you may not use this file except in compliance with the License.
@@ -79,6 +79,7 @@ render_error_body(503, Req, Reason) ->
 render_error_body(Code, Req, Reason) ->
     {ok, ReqState} = Req:add_response_header("Content-Type", "text/html"),
     ReasonPhrase = httpd_util:reason_phrase(Code),
+    WS = get_webserver_name(),
     Body = ["<html><head><title>",
             integer_to_list(Code),
             " ",
@@ -87,7 +88,7 @@ render_error_body(Code, Req, Reason) ->
             ReasonPhrase,
             "</h1>",
             Reason,
-            "<p><hr><address>mochiweb+webmachine web server</address></body></html>"],
+            "<p><hr><address>" ++ WS ++ "+webmachine web server</address></body></html>"],
     {iolist_to_binary(Body), ReqState}.
 
 maybe_log(_Code, _Req, {error, {exit, normal, _Stack}}) ->

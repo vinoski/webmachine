@@ -1,6 +1,6 @@
 %% @author Justin Sheehy <justin@basho.com>
 %% @author Andy Gross <andy@basho.com>
-%% @copyright 2007-2010 Basho Technologies
+%% @copyright 2007-2013 Basho Technologies
 %%
 %%    Licensed under the Apache License, Version 2.0 (the "License");
 %%    you may not use this file except in compliance with the License.
@@ -90,7 +90,7 @@ expected_response_code("If-None-Match", _, false) ->
     204.
 
 etag_test_() ->
-    Time = 10,
+    Time = 30,
     {spawn,
      [{setup,
        fun setup/0,
@@ -140,9 +140,21 @@ cleanup({Pid0, Pid1}) ->
     %% clean up
     unlink(Pid0),
     exit(Pid0, normal),
+    ok = wait_for_pid(Pid0),
     unlink(Pid1),
-    exit(Pid1, kill),
+    webmachine_ws:stop(Pid1),
+    ok = wait_for_pid(Pid1),
     application:stop(inets).
+
+wait_for_pid(Pid) ->
+    Ref = erlang:monitor(process, Pid),
+    receive
+        {'DOWN', Ref, process, _, _} ->
+            ok
+    after
+        5000 ->
+            {error, {didnotexit, Pid, erlang:process_info(Pid)}}
+    end.
 
 init([]) ->
     {ok, undefined}.

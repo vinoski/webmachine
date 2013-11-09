@@ -1,5 +1,5 @@
 %% @author Steve Vinoski <vinoski@ieee.org>
-%% @copyright 2012 Basho Technologies
+%% @copyright 2012-2013 Basho Technologies
 %%
 %%    Licensed under the Apache License, Version 2.0 (the "License");
 %%    you may not use this file except in compliance with the License.
@@ -18,7 +18,7 @@
 -author('Steve Vinoski <vinoski@ieee.org>').
 
 -export([start/1, start/2, stop/1, dispatch_request/2, get_webserver_mod/0,
-         make_headers/1, headers_to_list/1]).
+         get_listen_port/1, make_headers/1, headers_to_list/1]).
 
 %% The `log_dir' option is deprecated, but remove it from the
 %% options list if it is present
@@ -52,7 +52,6 @@ dispatch_request(Name, Req) ->
            end,
     {Path, _} = Req:path(),
     {RD, _} = Req:get_reqdata(),
-
     %% Run the dispatch code, catch any errors...
     try webmachine_dispatcher:dispatch(Host, Path, DispatchList, RD) of
         {error, invalid_host} ->
@@ -66,7 +65,7 @@ dispatch_request(Name, Req) ->
                                               PathTokens,AppRoot,StringPath),
             XReq1 = {webmachine_request,RS1},
             try
-                {ok, Resource} = BootstrapResource:wrap(Mod, ModOpts),
+                {ok,Resource} = BootstrapResource:wrap(Mod, ModOpts),
                 {ok,RS2} = XReq1:set_metadata('resource_module',
                                               resource_module(Mod, ModOpts)),
                 webmachine_decision_core:handle_request(Resource, RS2)
@@ -101,6 +100,10 @@ get_webserver_mod() ->
         {ok, cowboy} ->
             webmachine_cowboy
     end.
+
+get_listen_port(Server) ->
+    WSMod = get_webserver_mod(),
+    WSMod:get_listen_port(Server).
 
 make_headers(Hdrs) ->
     WSMod = get_webserver_mod(),

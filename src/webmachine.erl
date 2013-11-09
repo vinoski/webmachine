@@ -1,6 +1,6 @@
 %% @author Justin Sheehy <justin@basho.com>
 %% @author Andy Gross <andy@basho.com>
-%% @copyright 2007-2009 Basho Technologies
+%% @copyright 2007-2013 Basho Technologies
 %%
 %%    Licensed under the Apache License, Version 2.0 (the "License");
 %%    you may not use this file except in compliance with the License.
@@ -43,30 +43,31 @@ new_request(mochiweb, Request) ->
     Socket = Request:get(socket),
     RawPath = Request:get(raw_path),
     Headers = Request:get(headers),
-    new_request_common(Socket, Method, Scheme, RawPath, Version, Headers, webmachine_mochiweb);
+    new_request_common(Socket, Method, Scheme, RawPath, Version, Headers, webmachine_mochiweb, undefined);
 
-new_request(yaws, {Module, Arg}) ->
+new_request(yaws, Data) ->
     Props = [socket, method, scheme, path, version, headers],
-    PList = Module:get_req_info(Props, Arg),
+    PList = webmachine_yaws:get_req_info(Props, Data),
     {_, [Socket, Method, Scheme, RawPath, Version, Headers]} = lists:unzip(PList),
-    new_request_common(Socket, Method, Scheme, RawPath, Version, Headers, webmachine_yaws);
+    new_request_common(Socket, Method, Scheme, RawPath, Version, Headers, webmachine_yaws, Data);
 
-new_request(cowboy, Req) ->
-    {ok, Transport, S} = cowboy_http_req:transport(Req),
-    {Method, Req1} = cowboy_http_req:method(Req),
-    {Socket, Scheme} = case Transport:name() of
-        tcp ->
-            {S, http};
-        ssl ->
-            {{ssl, S}, https}
-    end,
-    {RawPath, Req2} = cowboy_http_req:raw_path(Req1),
-    {Version, Req3} = cowboy_http_req:version(Req2),
-    {Headers, _Req4} = cowboy_http_req:headers(Req3),
-    new_request_common(Socket, Method, Scheme, binary_to_list(RawPath), Version, Headers, webmachine_cowboy).
+new_request(cowboy, {CowboyReq, Scheme}) ->
+    {Method0, Req1} = cowboy_req:method(CowboyReq),
+    Method = list_to_existing_atom(binary_to_list(Method0)),
+    {Path, Req2} = cowboy_req:path(Req1),
+    {Version, Req3} = case cowboy_req:version(Req2) of
+                          {Vsn, R3} when is_atom(Vsn) ->
+                              [_, Major, Minor] = string:tokens(atom_to_list(Vsn), "/."),
+                              {{list_to_integer(Major), list_to_integer(Minor)}, R3};
+                          Else ->
+                              Else
+                      end,
+    {Headers, Req4} = cowboy_req:headers(Req3),
+    new_request_common(undefined, Method, Scheme, binary_to_list(Path), Version, Headers,
+                       webmachine_cowboy, Req4).
 
 
-new_request_common(Socket, Method, Scheme, RawPath0, Version, Headers0, WSMod) ->
+new_request_common(Socket, Method, Scheme, RawPath0, Version, Headers0, WSMod, WSData) ->
     {Headers, RawPath} = case application:get_env(webmachine, rewrite_module) of
                              {ok, RewriteMod} ->
                                  do_rewrite(RewriteMod,
@@ -79,14 +80,18 @@ new_request_common(Socket, Method, Scheme, RawPath0, Version, Headers0, WSMod) -
                                  {Headers0, RawPath0}
                          end,
     InitState = #wm_reqstate{socket=Socket,
-                             reqdata=wrq:create(Method,Scheme,Version,RawPath,Headers,WSMod)},
-
-    InitReq = {webmachine_request,InitState},
-    {Peer, _ReqState} = InitReq:get_peer(),
-    {Sock, ReqState} = InitReq:get_sock(),
-    ReqData = wrq:set_sock(Sock,
-                           wrq:set_peer(Peer,
-                                        ReqState#wm_reqstate.reqdata)),
+                             reqdata=wrq:create(Method,Scheme,Version,RawPath,Headers,WSMod,WSData)},
+    {ReqState, Peer, Sock} =
+        case Socket of
+            Socket when is_port(Socket) ->
+                InitReq = {webmachine_request,InitState},
+                {Peer0, _ReqState} = InitReq:get_peer(),
+                {Sock0, RS} = InitReq:get_sock(),
+                RD = wrq:set_sock(Sock0, wrq:set_peer(Peer0, RS#wm_reqstate.reqdata)),
+                {RS#wm_reqstate{reqdata=RD}, Peer0, Sock0};
+            _ ->
+                {InitState, undefined, Socket}
+        end,
     LogData = #wm_log_data{start_time=now(),
                            method=Method,
                            headers=Headers,
@@ -96,8 +101,7 @@ new_request_common(Socket, Method, Scheme, RawPath0, Version, Headers0, WSMod) -
                            version=Version,
                            response_code=404,
                            response_length=0},
-    webmachine_request:new(ReqState#wm_reqstate{log_data=LogData,
-                                                reqdata=ReqData}).
+    webmachine_request:new(ReqState#wm_reqstate{log_data=LogData}).
 
 do_rewrite(RewriteMod, Method, Scheme, Version, Headers, RawPath) ->
     case RewriteMod:rewrite(Method, Scheme, Version, Headers, RawPath) of
@@ -117,27 +121,53 @@ do_rewrite(RewriteMod, Method, Scheme, Version, Headers, RawPath) ->
 -include_lib("eunit/include/eunit.hrl").
 
 start_stop_test() ->
-    application:start(inets),
-    application:start(mochiweb),
+    start_apps([inets, crypto, mochiweb]),
     WSstr = os:getenv("WEBMACHINE_SERVER"),
-    WS = case WSstr of
-             false ->
-                 false;
-             _ ->
-                 Nm = list_to_atom(WSstr),
-                 application:start(Nm),
-                 Nm
-    end,
+    {WS, Deps} = case WSstr of
+                     false ->
+                         {false,[]};
+                     _ ->
+                         Nm = list_to_atom(WSstr),
+                         case Nm of
+                             mochiweb ->
+                                 {false,[]};
+                             yaws ->
+                                 ok = start_apps([Nm]),
+                                 {Nm,[]};
+                             cowboy ->
+                                 ok = start_apps([ranch, cowboy]),
+                                 {Nm,[ranch]}
+                         end
+                 end,
     ?assertEqual(ok, webmachine:start()),
     ?assertEqual(ok, webmachine:stop()),
     case WS of
         false ->
             ok;
         _ ->
-            application:stop(WS)
+            ok = application:stop(WS),
+            lists:map(fun(Dep) ->
+                              ok = application:stop(Dep)
+                      end, Deps)
     end,
-    application:stop(mochiweb),
-    application:stop(inets),
+    ok = application:stop(mochiweb),
+    ok = application:stop(crypto),
+    ok = application:stop(inets),
+    ok.
+
+start_apps([App|Rest]=AppList) ->
+    Apps = application:which_applications(),
+    case lists:keymember(App,1,Apps) of
+        true ->
+            application:stop(App),
+            timer:sleep(100),
+            start_apps(AppList);
+        false ->
+            ok
+    end,
+    application:start(App),
+    start_apps(Rest);
+start_apps([]) ->
     ok.
 
 -endif.

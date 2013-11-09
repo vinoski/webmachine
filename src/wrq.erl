@@ -1,5 +1,5 @@
 %% @author Justin Sheehy <justin@basho.com>
-%% @copyright 2007-2009 Basho Technologies
+%% @copyright 2007-2013 Basho Technologies
 %%
 %%    Licensed under the Apache License, Version 2.0 (the "License");
 %%    you may not use this file except in compliance with the License.
@@ -16,12 +16,12 @@
 -module(wrq).
 -author('Justin Sheehy <justin@basho.com>').
 
--export([create/4, create/5, create/6, load_dispatch_data/7]).
+-export([create/4, create/5, create/6, create/7, load_dispatch_data/7]).
 -export([method/1,scheme/1,version/1,peer/1,disp_path/1,path/1,raw_path/1,
          path_info/1,response_code/1,req_cookie/1,req_qs/1,req_headers/1,
          req_headers_to_list/1,req_body/1,stream_req_body/2,resp_redirect/1,
          resp_headers/1, resp_body/1,app_root/1,path_tokens/1, host_tokens/1,
-         port/1, base_uri/1,sock/1]).
+         port/1,base_uri/1,sock/1,wsmod/1,wsdata/1]).
 -export([path_info/2,get_req_header/2,do_redirect/2,fresh_resp_headers/2,
          get_resp_header/2,set_resp_header/3,set_resp_headers/2,
          set_disp_path/2,set_req_body/2,set_resp_body/2,set_response_code/2,
@@ -29,7 +29,7 @@
          append_to_resp_body/2,append_to_response_body/2, set_resp_range/2,
          max_recv_body/1,set_max_recv_body/2,
          get_cookie_value/2,get_qs_value/2,get_qs_value/3,set_peer/2,
-         set_sock/2,add_note/3, get_notes/1]).
+         set_sock/2,add_note/3, get_notes/1, set_wsdata/2]).
 
 % @type reqdata(). The opaque data type used for req/resp data structures.
 -include("wm_reqdata.hrl").
@@ -37,10 +37,12 @@
 
 
 create(Method,Version,RawPath,Headers) ->
-	create(Method,http,Version,RawPath,Headers,webmachine_mochiweb).
+	create(Method,http,Version,RawPath,Headers,webmachine_mochiweb,undefined).
 create(Method,Scheme,Version,RawPath,Headers) ->
-    create(Method,Scheme,Version,RawPath,Headers,webmachine_mochiweb).
+    create(Method,Scheme,Version,RawPath,Headers,webmachine_mochiweb,undefined).
 create(Method,Scheme,Version,RawPath,Headers,WSMod) ->
+    create(Method,Scheme,Version,RawPath,Headers,WSMod,undefined).
+create(Method,Scheme,Version,RawPath,Headers,WSMod,WSData) ->
     create(#wm_reqdata{method=Method,scheme=Scheme,version=Version,
                        raw_path=RawPath,req_headers=Headers,
       wm_state=defined_on_call,
@@ -60,7 +62,8 @@ create(Method,Scheme,Version,RawPath,Headers,WSMod) ->
       resp_redirect=false, resp_headers=WSMod:new_headers(),
       resp_body = <<>>, response_code=500,
       resp_range = follow_request,
-      notes=[], wsmod=WSMod}).
+      notes=[],
+      wsmod=WSMod, wsdata=WSData}).
 create(RD = #wm_reqdata{raw_path=RawPath}) ->
     {Path, _, _} = mochiweb_util:urlsplit_path(RawPath),
     Cookie = case get_req_header("cookie", RD) of
@@ -87,6 +90,10 @@ version(_RD = #wm_reqdata{version=Version})
 peer(_RD = #wm_reqdata{peer=Peer}) when is_list(Peer) -> Peer.
 
 sock(_RD = #wm_reqdata{sock=Sock}) when is_list(Sock) -> Sock.
+
+wsmod(_RD = #wm_reqdata{wsmod=WSMod}) -> WSMod.
+
+wsdata(_RD = #wm_reqdata{wsdata=WSData}) -> WSData.
 
 app_root(_RD = #wm_reqdata{app_root=AR}) when is_list(AR) -> AR.
 
@@ -192,8 +199,7 @@ set_response_code(Code, RD) when is_integer(Code) ->
 
 get_resp_header(HdrName, _RD=#wm_reqdata{resp_headers=RespH, wsmod=WSMod}) ->
     WSMod:get_header_value(HdrName, RespH).
-set_resp_header(K, V, RD=#wm_reqdata{resp_headers=RespH, wsmod=WSMod})
-  when is_list(K),is_list(V) ->
+set_resp_header(K, V, RD=#wm_reqdata{resp_headers=RespH, wsmod=WSMod}) ->
     RD#wm_reqdata{resp_headers=WSMod:add_header(K, V, RespH)}.
 set_resp_headers(Hdrs, RD=#wm_reqdata{resp_headers=RespH, wsmod=WSMod}) ->
     F = fun({K, V}, Acc) -> WSMod:add_header(K, V, Acc) end,
@@ -201,10 +207,9 @@ set_resp_headers(Hdrs, RD=#wm_reqdata{resp_headers=RespH, wsmod=WSMod}) ->
 fresh_resp_headers(Hdrs, #wm_reqdata{wsmod=WSMod}=RD) ->
     F = fun({K, V}, Acc) -> WSMod:add_header(K, V, Acc) end,
     RD#wm_reqdata{resp_headers=lists:foldl(F, WSMod:new_headers(), Hdrs)}.
-remove_resp_header(K, RD=#wm_reqdata{resp_headers=RespH, wsmod=WSMod}) when is_list(K) ->
+remove_resp_header(K, RD=#wm_reqdata{resp_headers=RespH, wsmod=WSMod}) ->
     RD#wm_reqdata{resp_headers=WSMod:headers_from_list(
-                                 proplists:delete(K,
-                                     WSMod:headers_to_list(RespH)))}.
+                                 proplists:delete(K, WSMod:headers_to_list(RespH)))}.
 
 merge_resp_headers(Hdrs, RD=#wm_reqdata{resp_headers=RespH, wsmod=WSMod}) ->
     F = fun({K, V}, Acc) -> WSMod:merge_header(K, V, Acc) end,
@@ -255,6 +260,9 @@ base_uri(RD) ->
     Host = string:join(RD#wm_reqdata.host_tokens, "."),
     PortString = port_string(RD#wm_reqdata.scheme, RD#wm_reqdata.port),
     Scheme ++ "://" ++ Host ++ PortString.
+
+set_wsdata(WSData, RD) ->
+    RD#wm_reqdata{wsdata=WSData}.
 
 port_string(Scheme, Port) ->
     case Scheme of

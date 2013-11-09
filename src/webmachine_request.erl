@@ -1,6 +1,6 @@
 %% @author Justin Sheehy <justin@basho.com>
 %% @author Andy Gross <andy@basho.com>
-%% @copyright 2007-2012 Basho Technologies
+%% @copyright 2007-2013 Basho Technologies
 %% Based on mochiweb_request.erl, which is Copyright 2007 Mochi Media, Inc.
 %%
 %%    Licensed under the Apache License, Version 2.0 (the "License");
@@ -93,7 +93,8 @@
          get_qs_value/2,
          get_qs_value/3,
          range/1,
-         log_data/1
+         log_data/1,
+         make_code/1
         ]).
 
 -include("webmachine_logger.hrl").
@@ -101,7 +102,12 @@
 -include("wm_reqdata.hrl").
 
 -define(WMVSN, "1.10.5").
+-ifdef(WEBMACHINE_COWBOY).
+-define(QUIP, "may your pants forever sparkle").
+-else.
 -define(QUIP, "jokes are better explained").
+-endif.
+
 -define(IDLE_TIMEOUT, infinity).
 
 new(#wm_reqstate{}=ReqState) ->
@@ -133,12 +139,12 @@ get_peer(ReqState) ->
 get_sock({?MODULE, ReqState} = Req) ->
     case ReqState#wm_reqstate.sock of
         undefined ->
-            Sockname = case ReqState#wm_reqstate.socket of
-                testing -> {ok, {{127,0,0,1}, 80}};
-                {ssl,SslSocket} -> ssl:sockname(SslSocket);
-                _ -> inet:sockname(ReqState#wm_reqstate.socket)
-            end,
+            Sockname = inet:sockname(ReqState#wm_reqstate.socket),
             Sock = peer_from_peername(Sockname, Req),
+            NewReqState = ReqState#wm_reqstate{sock=Sock},
+            {Sock, NewReqState};
+        testing ->
+            Sock = peer_from_peername({ok, {{127,0,0,1}, 80}}, Req),
             NewReqState = ReqState#wm_reqstate{sock=Sock},
             {Sock, NewReqState};
         _ ->
@@ -191,15 +197,16 @@ call({req_body, MaxRecvBody}, {?MODULE, ReqState}) ->
             RD=(ReqState#wm_reqstate.reqdata)#wm_reqdata{
                  max_recv_body=MaxRecvBody},
             NewReqState=ReqState#wm_reqstate{reqdata=RD},
-            NewBody = case get(req_body) of
-                undefined ->
-                    NewB = do_recv_body(NewReqState),
-                    put(req_body, NewB),
-                    NewB;
-                B -> B
-            end,
+            {NewBody, NewReqState2} = case get(req_body) of
+                                          undefined ->
+                                              {{ok, NewB}, NRS2} = do_recv_body(NewReqState),
+                                              put(req_body, NewB),
+                                              {NewB, NRS2};
+                                          B ->
+                                              {B, NewReqState}
+                                      end,
             NewRD = RD#wm_reqdata{req_body=NewBody},
-            {NewBody, NewReqState#wm_reqstate{
+            {NewBody, NewReqState2#wm_reqstate{
                         bodyfetch=standard,reqdata=NewRD,reqbody=NewBody}}
     end;
 call({stream_req_body, MaxHunk}, {?MODULE, ReqState}) ->
@@ -207,8 +214,8 @@ call({stream_req_body, MaxHunk}, {?MODULE, ReqState}) ->
         standard ->
             {stream_conflict, ReqState};
         _ ->
-            {recv_stream_body(ReqState, MaxHunk),
-             ReqState#wm_reqstate{bodyfetch=stream}}
+            NewRS = ReqState#wm_reqstate{bodyfetch=stream},
+            recv_stream_body(NewRS, MaxHunk)
     end;
 call(resp_headers, {?MODULE, ReqState}) ->
     {wrq:resp_headers(ReqState#wm_reqstate.reqdata), ReqState};
@@ -216,7 +223,7 @@ call(resp_redirect, {?MODULE, ReqState}) ->
     {wrq:resp_redirect(ReqState#wm_reqstate.reqdata), ReqState};
 call({get_resp_header, HdrName}, {?MODULE, ReqState}) ->
     ReqData = ReqState#wm_reqstate.reqdata,
-    WSMod = ReqData#wm_reqdata.wsmod,
+    WSMod = wrq:wsmod(ReqData),
     Reply = WSMod:get_header_value(HdrName, wrq:resp_headers(ReqData)),
     {Reply, ReqState};
 call(get_path_info, {?MODULE, ReqState}) ->
@@ -319,60 +326,12 @@ get_header_value(K, ReqState) ->
 
 get_outheader_value(K, {?MODULE, ReqState}) ->
     ReqData = ReqState#wm_reqstate.reqdata,
-    WSMod = ReqData#wm_reqdata.wsmod,
+    WSMod = wrq:wsmod(ReqData),
     {WSMod:get_header_value(K, wrq:resp_headers(ReqData)), ReqState};
 get_outheader_value(K, ReqState) ->
     ReqData = ReqState#wm_reqstate.reqdata,
-    WSMod = ReqData#wm_reqdata.wsmod,
+    WSMod = wrq:wsmod(ReqData),
     {WSMod:get_header_value(K, wrq:resp_headers(ReqData)), ReqState}.
-
-send(Socket, Data, ReqState) ->
-    ReqData = ReqState#wm_reqstate.reqdata,
-    WSMod = ReqData#wm_reqdata.wsmod,
-    case WSMod:socket_send(Socket, Data) of
-        ok -> ok;
-        {error,closed} -> ok;
-        _ -> exit(normal)
-    end.
-
-send_stream_body(Socket, X, {?MODULE, _ReqState}=Req) -> send_stream_body(Socket, X, 0, Req).
-send_stream_body(Socket, {<<>>, done}, SoFar, {?MODULE, _ReqState}=Req) ->
-    send_chunk(Socket, <<>>, Req),
-    SoFar;
-send_stream_body(Socket, {Data, done}, SoFar, {?MODULE, _ReqState}=Req) ->
-    Size = send_chunk(Socket, Data, Req),
-    send_chunk(Socket, <<>>, Req),
-    Size + SoFar;
-
-send_stream_body(Socket, {<<>>, Next}, SoFar, {?MODULE, _ReqState}=Req) ->
-    send_stream_body(Socket, Next(), SoFar, Req);
-send_stream_body(Socket, {[], Next}, SoFar, {?MODULE, _ReqState}=Req) ->
-    send_stream_body(Socket, Next(), SoFar, Req);
-send_stream_body(Socket, {Data, Next}, SoFar, {?MODULE, _ReqState}=Req) ->
-    Size = send_chunk(Socket, Data, Req),
-    send_stream_body(Socket, Next(), Size + SoFar, Req).
-
-send_stream_body_no_chunk(Socket, {Data, done}, {?MODULE, ReqState}) ->
-    send(Socket, Data, ReqState);
-send_stream_body_no_chunk(Socket, {Data, Next}, {?MODULE, ReqState}=Req) ->
-    send(Socket, Data, ReqState),
-    send_stream_body_no_chunk(Socket, Next(), Req).
-
-send_writer_body(Socket, {Encoder, Charsetter, BodyFun}, {?MODULE, _ReqState}=Req) ->
-    put(bytes_written, 0),
-    Writer = fun(Data) ->
-        Size = send_chunk(Socket, Encoder(Charsetter(Data)), Req),
-        put(bytes_written, get(bytes_written) + Size),
-        Size
-    end,
-    BodyFun(Writer),
-    send_chunk(Socket, <<>>, Req),
-    get(bytes_written).
-
-send_chunk(Socket, Data, {?MODULE, ReqState}) ->
-    Size = iolist_size(Data),
-    send(Socket, [mochihex:to_hex(Size), <<"\r\n">>, Data, <<"\r\n">>], ReqState),
-    Size.
 
 send_ok_response(ReasonPhrase, {?MODULE, ReqState}=Req) ->
     RD0 = ReqState#wm_reqstate.reqdata,
@@ -400,59 +359,50 @@ send_ok_response(ReasonPhrase, {?MODULE, ReqState}=Req) ->
 
 send_response(Code, #wm_reqstate{}=ReqState) -> send_response(Code,ReqState,{?MODULE,ReqState});
 send_response(Code, {?MODULE, ReqState}=Req) -> send_response(Code,ReqState,Req).
-send_response(Code, PassedState=#wm_reqstate{reqdata=RD}, Req) ->
+send_response(Code0, PassedState=#wm_reqstate{reqdata=RD}, _Req) ->
     Body0 = wrq:resp_body(RD),
     {Body,Length} = case Body0 of
         {stream, StreamBody} -> {{stream, StreamBody}, chunked};
-        {known_length_stream, Size, StreamBody} -> {{known_length_stream, StreamBody}, Size};
+        {known_length_stream, Size, _StreamBody} -> {Body0, Size};
         {stream, Size, Fun} -> {{stream, Fun(0, Size-1)}, chunked};
         {writer, WriteBody} -> {{writer, WriteBody}, chunked};
         _ -> {Body0, iolist_size([Body0])}
     end,
-    send(PassedState#wm_reqstate.socket,
-         [make_version(wrq:version(RD)),
-          make_code(Code), <<"\r\n">> |
-          make_headers(Code, Length, RD)], PassedState),
-    FinalLength = case wrq:method(RD) of
-         'HEAD' -> Length;
-         _ ->
-            case Body of
-                {stream, Body2} ->
-                    send_stream_body(PassedState#wm_reqstate.socket, Body2, Req);
-                {known_length_stream, Body2} ->
-                    send_stream_body_no_chunk(PassedState#wm_reqstate.socket, Body2, Req),
-                    Length;
-                {writer, Body2} ->
-                    send_writer_body(PassedState#wm_reqstate.socket, Body2, Req);
-                _ ->
-                    send(PassedState#wm_reqstate.socket, Body, PassedState),
-                    Length
-            end
-    end,
+    FLen = case wrq:method(RD) of
+               'HEAD' -> Length;
+               _ ->
+                   case Body of
+                       {stream, _Body2} ->
+                           fun() -> erase(bytes_written) end;
+                       {known_length_stream, Length, _Body2} ->
+                           Length;
+                       {writer, _Body2} ->
+                           fun() -> erase(bytes_written) end;
+                       _ ->
+                           Length
+                   end
+           end,
+    WSMod = wrq:wsmod(RD),
+    Socket = PassedState#wm_reqstate.socket,
+    Code = make_code(Code0),
+    Headers = make_headers(Code0, Length, RD),
+    {ok, NRD} = WSMod:send_reply(Socket, Code, Headers, Body, RD),
     InitLogData = PassedState#wm_reqstate.log_data,
+    FinalLength = if
+                      is_function(FLen) -> FLen();
+                      true -> FLen
+                  end,
     FinalLogData = InitLogData#wm_log_data{response_code=Code,
                                            response_length=FinalLength},
-    {ok, PassedState#wm_reqstate{reqdata=wrq:set_response_code(Code, RD),
-                     log_data=FinalLogData}}.
-
-%% @doc  Infer body length from transfer-encoding and content-length headers.
-body_length(Req) ->
-    case get_header_value("transfer-encoding", Req) of
-        {undefined, _} ->
-            case get_header_value("content-length", Req) of
-                {undefined, _} -> undefined;
-                {Length, _} -> list_to_integer(Length)
-            end;
-        {"chunked", _} -> chunked;
-        Unknown -> {unknown_transfer_encoding, Unknown}
-    end.
+    {ok, PassedState#wm_reqstate{reqdata=wrq:set_response_code(Code0, NRD),
+                                 log_data=FinalLogData}}.
 
 %% @doc Receive the body of the HTTP request (defined by Content-Length).
 %%      Will only receive up to the default max-body length
-do_recv_body(PassedState=#wm_reqstate{reqdata=RD}) ->
-    MRH = RD#wm_reqdata.max_recv_hunk,
-    MRB = RD#wm_reqdata.max_recv_body,
-    read_whole_stream(recv_stream_body(PassedState, MRH), [], MRB, 0).
+do_recv_body(PassedState=#wm_reqstate{socket=Socket, reqdata=RD}) ->
+    WSMod = wrq:wsmod(RD),
+    {Result, NRD} = WSMod:recv_body(Socket, RD),
+    {Result, PassedState#wm_reqstate{reqdata=NRD}}.
 
 read_whole_stream({Hunk,_}, _, MaxRecvBody, SizeAcc)
   when SizeAcc + byte_size(Hunk) > MaxRecvBody ->
@@ -470,86 +420,13 @@ read_whole_stream({Hunk,Next}, Acc0, MaxRecvBody, SizeAcc) ->
             end
     end.
 
-recv_stream_body(PassedState=#wm_reqstate{reqdata=RD}, MaxHunkSize) ->
-    put(mochiweb_request_recv, true),
-    case get_header_value("expect", PassedState) of
-        {"100-continue", _} ->
-            send(PassedState#wm_reqstate.socket,
-                 [make_version(wrq:version(RD)),
-                  make_code(100), <<"\r\n\r\n">>], PassedState);
-        _Else ->
-            ok
-    end,
-    case body_length(PassedState) of
-        {unknown_transfer_encoding, X} -> exit({unknown_transfer_encoding, X});
-        undefined -> {<<>>, done};
-        0 -> {<<>>, done};
-        chunked -> recv_chunked_body(PassedState#wm_reqstate.socket,
-                                     MaxHunkSize, {?MODULE, PassedState});
-        Length -> recv_unchunked_body(PassedState#wm_reqstate.socket,
-                                      MaxHunkSize, Length, {?MODULE, PassedState})
-    end.
-
-recv_unchunked_body(Socket, MaxHunk, DataLeft, {?MODULE, ReqState}=Req) ->
-    ReqData = ReqState#wm_reqstate.reqdata,
-    WSMod = ReqData#wm_reqdata.wsmod,
-    case MaxHunk >= DataLeft of
-        true ->
-            {ok,Data1} = WSMod:socket_recv(Socket,DataLeft,?IDLE_TIMEOUT),
-            {Data1, done};
-        false ->
-            {ok,Data2} = WSMod:socket_recv(Socket,MaxHunk,?IDLE_TIMEOUT),
-            {Data2,
-             fun() -> recv_unchunked_body(Socket, MaxHunk, DataLeft-MaxHunk, Req)
-             end}
-    end.
-
-recv_chunked_body(Socket, MaxHunk, {?MODULE, _ReqState}=Req) ->
-    case read_chunk_length(Socket, false, Req) of
-        0 -> {<<>>, done};
-        ChunkLength -> recv_chunked_body(Socket,MaxHunk,ChunkLength,Req)
-    end.
-recv_chunked_body(Socket, MaxHunk, LeftInChunk, {?MODULE, ReqState}=Req) ->
-    ReqData = ReqState#wm_reqstate.reqdata,
-    WSMod = ReqData#wm_reqdata.wsmod,
-    case MaxHunk >= LeftInChunk of
-        true ->
-            {ok,Data1} = WSMod:socket_recv(Socket,LeftInChunk,?IDLE_TIMEOUT),
-            {Data1,
-             fun() -> recv_chunked_body(Socket, MaxHunk, Req)
-             end};
-        false ->
-            {ok,Data2} = WSMod:socket_recv(Socket,MaxHunk,?IDLE_TIMEOUT),
-            {Data2,
-             fun() -> recv_chunked_body(Socket, MaxHunk, LeftInChunk-MaxHunk, Req)
-             end}
-    end.
-
-read_chunk_length(Socket, MaybeLastChunk, {?MODULE, ReqState}=Req) ->
-    ReqData = ReqState#wm_reqstate.reqdata,
-    WSMod = ReqData#wm_reqdata.wsmod,
-    WSMod:socket_setopts(Socket, [{packet, line}]),
-    case WSMod:socket_recv(Socket, 0, ?IDLE_TIMEOUT) of
-        {ok, Header} ->
-            WSMod:socket_setopts(Socket, [{packet, raw}]),
-            Splitter = fun (C) ->
-                               C =/= $\r andalso C =/= $\n andalso C =/= $
-                                   andalso C =/= 59 % semicolon
-                       end,
-            {Hex, _Rest} = lists:splitwith(Splitter, binary_to_list(Header)),
-            case Hex of
-                [] ->
-                    %% skip the \r\n at the end of a chunk, or
-                    %% allow [badly formed] last chunk header to be
-                    %% empty instead of '0' explicitly
-                    if MaybeLastChunk -> 0;
-                       true -> read_chunk_length(Socket, true, Req)
-                    end;
-                _ ->
-                    erlang:list_to_integer(Hex, 16)
-            end;
-        _ ->
-            exit(normal)
+recv_stream_body(#wm_reqstate{socket=Socket, reqdata=RD}=ReqState, MaxHunk) ->
+    WSMod = wrq:wsmod(RD),
+    case WSMod:recv_stream_body(Socket, MaxHunk, RD) of
+        {{error, Error}, _} ->
+            exit({error, Error});
+        {Result, NRD} ->
+            {Result, ReqState#wm_reqstate{reqdata=NRD}}
     end.
 
 get_range({?MODULE, #wm_reqstate{reqdata = RD}=ReqState}=Req) ->
@@ -730,11 +607,6 @@ make_code(Code) when is_integer(Code) ->
 make_code(Io) when is_list(Io); is_binary(Io) ->
     Io.
 
-make_version({1, 0}) ->
-    <<"HTTP/1.0 ">>;
-make_version(_) ->
-    <<"HTTP/1.1 ">>.
-
 make_headers({Code, _ReasonPhrase}, Length, RD) ->
     make_headers(Code, Length, RD);
 make_headers(Code, Length, RD) when is_integer(Code) ->
@@ -773,10 +645,7 @@ make_headers(Code, Length, RD) when is_integer(Code) ->
         _ ->
             WithSrv
     end,
-    F = fun({K, V}, Acc) ->
-                [mochiweb_util:make_io(K), <<": ">>, V, <<"\r\n">> | Acc]
-        end,
-    lists:foldl(F, [<<"\r\n">>], WSMod:headers_to_list(Hdrs)).
+    WSMod:headers_to_list(Hdrs).
 
 get_reqdata(#wm_reqstate{}=ReqState) -> call(get_reqdata, {?MODULE, ReqState});
 get_reqdata(Req) -> call(get_reqdata, Req).
@@ -999,6 +868,7 @@ peer_test() ->
             exit({error, listener_fail})
     end.
 
+-ifndef(WEBMACHINE_COWBOY).
 sock_test() ->
     Self = self(),
     Pid = spawn_link(fun() ->
@@ -1028,6 +898,6 @@ sock_test() ->
     after 2000 ->
             exit({error, listener_fail})
     end.
-
+-endif.
 
 -endif.

@@ -15,7 +15,7 @@
 
 -module(decision_core_test).
 
--ifdef(WEBMACHINE_MOCHIWEB).
+%%-ifdef(WEBMACHINE_MOCHIWEB).
 -ifdef(TEST).
 
 -include("wm_reqdata.hrl").
@@ -375,7 +375,7 @@ service_unavailable() ->
 
 %% 503 result via B13 (at ping)
 ping_invalid() ->
-                                                % "breakout" for "anything other than pong"
+    %% "breakout" for "anything other than pong"
     put_setting(ping, breakout),
     {ok, Result} = httpc:request(head, {url(), []}, [], []),
     ?assertMatch({{"HTTP/1.1", 503, "Service Unavailable"}, _, _}, Result),
@@ -1554,4 +1554,4 @@ to_html(ReqData, Context) ->
     {?HTML_CONTENT, ReqData, Context}.
 
 -endif.
--endif.
+%%-endif.
