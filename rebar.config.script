@@ -2,7 +2,7 @@
 %% ex: ft=erlang ts=4 sw=4 et
 
 YawsDep = {yaws, "1.*", {git, "git://github.com/klacke/yaws", {branch, "master"}}}.
-CowboyDep = {cowboy, "0.8.6", {git, "git://github.com/extend/cowboy", {tag, "0.8.6"}}}.
+CowboyDep = {cowboy, "0.9.0", {git, "git://github.com/extend/cowboy", {tag, "0.9.0"}}}.
 
 case os:getenv("WEBMACHINE_SERVER") of
     false ->
