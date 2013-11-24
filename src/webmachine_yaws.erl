@@ -272,13 +272,17 @@ check_for_close(Arg, RespHeaders) ->
     end.
 
 header_to_lower(Hdr, Hdrs) ->
-    string:to_lower(
-      case get_header_value(Hdr, Hdrs) of
-          Val when is_list(Val) ->
-              Val;
-          Val when is_binary(Val) ->
-              binary_to_list(Val)
-      end).
+    case get_header_value(Hdr, Hdrs) of
+        undefined ->
+            undefined;
+        Val ->
+            string:to_lower(if
+                                is_list(Val) ->
+                                    Val;
+                                is_binary(Val) ->
+                                    binary_to_list(Val)
+                            end)
+    end.
 
 do_close(Socket) ->
     case yaws_api:get_sslsocket(Socket) of
